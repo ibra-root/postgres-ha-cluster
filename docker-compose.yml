@@ -1,0 +1,62 @@
+services:
+  pg-primary:
+    image: postgres:16-alpine
+    container_name: pg-primary
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REPLICA_USER: ${REPLICA_USER}
+      REPLICA_PASSWORD: ${REPLICA_PASSWORD}
+    volumes:
+      - primary_data:/var/lib/postgresql/data
+      - ./postgres/primary/01-init-replication.sh:/docker-entrypoint-initdb.d/01-init-replication.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pg-ha-net
+
+  pg-replica:
+    image: postgres:16-alpine
+    container_name: pg-replica
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REPLICA_USER: ${REPLICA_USER}
+      REPLICA_PASSWORD: ${REPLICA_PASSWORD}
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - replica_data:/var/lib/postgresql/data
+      - ./postgres/replica/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/entrypoint.sh"]
+    networks:
+      - pg-ha-net
+
+  haproxy:
+    build:
+      context: ./haproxy
+    container_name: haproxy-lb
+    depends_on:
+      - pg-primary
+      - pg-replica
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+      - "7000:7000"
+    networks:
+      - pg-ha-net
+
+volumes:
+  primary_data:
+  replica_data:
+
+networks:
+  pg-ha-net:
+    driver: bridge
